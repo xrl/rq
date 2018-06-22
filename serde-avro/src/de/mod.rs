@@ -6,6 +6,7 @@ use serde;
 use serde_json;
 use std::borrow;
 use std::io;
+use std::fmt;
 
 pub mod read;
 mod util;
@@ -124,26 +125,28 @@ impl<'a, R> Deserializer<'a, read::Blocks<R>>
     }
 }
 
-impl<'a, 'b, R> serde::Deserializer for &'b mut Deserializer<'a, R>
+impl<'a, 'b, R> serde::Deserializer<'a> for &'b mut Deserializer<'a, R>
     where R: io::Read + read::Limit
 {
     type Error = error::Error;
 
-    forward_to_deserialize! {
-        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit option
-        seq seq_fixed_size bytes byte_buf map unit_struct newtype_struct
-        tuple_struct struct struct_field tuple enum ignored_any
+    forward_to_deserialize_any! {
+        <W: Visitor<'a>>
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct tuple_struct map
+        struct enum identifier ignored_any seq tuple
     }
 
     #[inline]
-    fn deserialize<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: serde::de::Visitor
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: serde::de::Visitor<'a>
     {
         if !self.input.take_limit()? {
             bail!(error::ErrorKind::EndOfStream)
         }
 
-        DeserializerImpl::new(&mut self.input, &*self.registry, &*self.schema).deserialize(visitor)
+        unimplemented!()
+//        DeserializerImpl::new(&mut self.input, &*self.registry, &*self.schema).deserialize(visitor)
     }
 }
 
@@ -162,7 +165,7 @@ impl<'a, R> DeserializerImpl<'a, R>
     }
 
     fn deserialize<V>(&mut self, visitor: V) -> Result<V::Value, error::Error>
-        where V: serde::de::Visitor
+        where V: serde::de::Visitor<'a>
     {
         use schema::Schema;
         use byteorder::ReadBytesExt;
@@ -225,8 +228,9 @@ impl<'a, R> DeserializerImpl<'a, R>
             },
             Schema::Record(ref inner) => {
                 debug!("Deserializing record of type {:?}", inner.name());
-                let fields = inner.fields();
-                visitor.visit_map(RecordVisitor::new(self.input, &*self.registry, fields))
+                unimplemented!()
+//                let fields = inner.fields();
+//                visitor.visit_map(RecordVisitor::new(self.input, &*self.registry, fields))
             },
             Schema::Enum(ref inner) => {
                 debug!("Deserializing enum of type {:?}", inner.name());
@@ -235,19 +239,22 @@ impl<'a, R> DeserializerImpl<'a, R>
             },
             Schema::Array(ref inner) => {
                 debug!("Deserializing array");
-                let elem_schema = inner.resolve(&self.registry);
-                visitor.visit_seq(ArrayVisitor::new(self.input, &*self.registry, elem_schema))
+                unimplemented!()
+//                let elem_schema = inner.resolve(&self.registry);
+//                visitor.visit_seq(ArrayVisitor::new(self.input, &*self.registry, elem_schema))
             },
             Schema::Map(ref inner) => {
                 debug!("Deserializing map");
-                let value_schema = inner.resolve(&self.registry);
-                visitor.visit_map(MapVisitor::new(self.input, &*self.registry, value_schema))
+                unimplemented!()
+//                let value_schema = inner.resolve(&self.registry);
+//                visitor.visit_map(MapVisitor::new(self.input, &*self.registry, value_schema))
             },
             Schema::Union(ref inner) => {
                 debug!("Deserializing union");
-                let variant = util::read_long(self.input)?;
-                let schema = inner[variant as usize].resolve(&self.registry);
-                DeserializerImpl::new(self.input, self.registry, &schema).deserialize(visitor)
+//                let variant = util::read_long(self.input)?;
+//                let schema = inner[variant as usize].resolve(&self.registry);
+                unimplemented!()
+//                DeserializerImpl::new(self.input, self.registry, &schema).deserialize(visitor)
             },
             Schema::Fixed(ref inner) => {
                 debug!("Deserializing fixed of size {}", inner.size());
@@ -260,20 +267,21 @@ impl<'a, R> DeserializerImpl<'a, R>
 }
 
 
-impl<'a, 'b, R> serde::Deserializer for &'b mut DeserializerImpl<'a, R>
+impl<'a, 'b, R> serde::Deserializer<'a> for &'b mut DeserializerImpl<'a, R>
     where R: io::Read
 {
     type Error = error::Error;
 
-    forward_to_deserialize! {
-        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit option
-        seq seq_fixed_size bytes byte_buf map unit_struct newtype_struct
-        tuple_struct struct struct_field tuple enum ignored_any
+    forward_to_deserialize_any! {
+        <W: Visitor<'a>>
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct tuple_struct map
+        struct enum identifier ignored_any seq tuple
     }
 
     #[inline]
-    fn deserialize<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: serde::de::Visitor
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: serde::de::Visitor<'a>
     {
         self.deserialize(visitor)
     }
@@ -295,45 +303,44 @@ impl<'a, R> RecordVisitor<'a, R>
     }
 }
 
-impl<'a, R> serde::de::MapVisitor for RecordVisitor<'a, R>
+impl<'a, R> serde::de::Visitor<'a> for RecordVisitor<'a, R>
     where R: io::Read
 {
-    type Error = error::Error;
+    type Value=R;
 
-    fn visit_key_seed<K>(&mut self, seed: K) -> error::Result<Option<K::Value>>
-        where K: serde::de::DeserializeSeed
-    {
-        if let Some(f) = self.fields.next() {
-            self.field = Some(f);
-            debug!("Deserializing field {:?}", f.name());
-            let k = seed.deserialize(FieldNameDeserializer(f.name()))?;
-            Ok(Some(k))
-        } else {
-            Ok(None)
-        }
+    // Format a message stating what data this Visitor expects to receive.
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a very special map")
     }
 
-    fn visit_value_seed<V>(&mut self, seed: V) -> error::Result<V::Value>
-        where V: serde::de::DeserializeSeed
+    fn visit_map<M>(self, mut access: M) -> Result<Self::Value,M::Error>
+        where M: serde::de::MapAccess<'a>
     {
-        let field = self.field.take().expect("visit_value called before visit_field");
-        let schema = field.field_type().resolve(&*self.registry);
-        seed.deserialize(&mut DeserializerImpl::new(self.input, &*self.registry, &schema))
+        unimplemented!()
+//        if let Some(f) = self.fields.next() {
+//            self.field = Some(f);
+//            debug!("Deserializing field {:?}", f.name());
+//            let k = seed.deserialize(FieldNameDeserializer(f.name()))?;
+//            Ok(Some(k))
+//        } else {
+//            Ok(None)
+//        }
     }
 }
 
-impl<'a> serde::Deserializer for FieldNameDeserializer<'a> {
+impl<'a> serde::Deserializer<'a> for FieldNameDeserializer<'a> {
     type Error = error::Error;
 
-    forward_to_deserialize! {
-        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string unit option
-        seq seq_fixed_size bytes byte_buf map unit_struct newtype_struct
-        tuple_struct struct struct_field tuple enum ignored_any
+    forward_to_deserialize_any! {
+        <W: Visitor<'a>>
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct tuple_struct map
+        struct enum identifier ignored_any seq tuple
     }
 
     #[inline]
-    fn deserialize<V>(self, visitor: V) -> Result<V::Value, Self::Error>
-        where V: serde::de::Visitor
+    fn deserialize_any<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+        where V: serde::de::Visitor<'a>
     {
         visitor.visit_str(self.0)
     }
@@ -383,18 +390,23 @@ impl<'a, R> ArrayVisitor<'a, R>
     }
 }
 
-impl<'a, R> serde::de::SeqVisitor for ArrayVisitor<'a, R>
+impl<'a, R> serde::de::Visitor<'a> for ArrayVisitor<'a, R>
     where R: io::Read
 {
-    type Error = error::Error;
+    type Value=R;
 
-    fn visit_seed<V>(&mut self, seed: V) -> error::Result<Option<V::Value>>
-        where V: serde::de::DeserializeSeed
+    // Format a message stating what data this Visitor expects to receive.
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a very special map")
+    }
+
+    fn visit_seq<M>(self, seq: M) -> Result<Self::Value,M::Error>
+        where M: serde::de::SeqAccess<'a>
     {
         if self.remainder.next(self.input)? {
             debug!("Deserializing array element");
             let mut de = DeserializerImpl::new(self.input, self.registry, &self.elem_schema);
-            let v = seed.deserialize(&mut de)?;
+            let v = seq.deserialize(&mut de)?;
             Ok(Some(v))
         } else {
             Ok(None)
@@ -418,13 +430,18 @@ impl<'a, R> MapVisitor<'a, R>
     }
 }
 
-impl<'a, R> serde::de::MapVisitor for MapVisitor<'a, R>
+impl<'a, R> serde::de::Visitor<'a> for MapVisitor<'a, R>
     where R: io::Read
 {
-    type Error = error::Error;
+    type Value=R;
 
-    fn visit_key_seed<K>(&mut self, seed: K) -> error::Result<Option<K::Value>>
-        where K: serde::de::DeserializeSeed
+    // Format a message stating what data this Visitor expects to receive.
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a very special map")
+    }
+
+    fn visit_map<K>(self, seed: K) -> Result<Self::Value, K::Error>
+        where K: serde::de::MapAccess<'a>
     {
         if self.remainder.next(&mut self.input)? {
             let schema = schema::Schema::String;
@@ -434,11 +451,5 @@ impl<'a, R> serde::de::MapVisitor for MapVisitor<'a, R>
         } else {
             Ok(None)
         }
-    }
-
-    fn visit_value_seed<V>(&mut self, seed: V) -> error::Result<V::Value>
-        where V: serde::de::DeserializeSeed
-    {
-        seed.deserialize(&mut DeserializerImpl::new(self.input, self.registry, &self.value_schema))
     }
 }
